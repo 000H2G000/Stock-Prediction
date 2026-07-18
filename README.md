@@ -58,3 +58,7 @@ AI system that predicts pharmacy/pharma distributor stock demand using internal 
 | Dashboard             | Streamlit                     | Free, open-source                |
 | Storage               | SQLite                        | Free, built into Python          |
 
+<img width="283" height="759" alt="image" src="https://github.com/user-attachments/assets/d1a4031e-cf0a-4f86-a4a9-2363e92b1cd2" />
+<img width="290" height="984" alt="image" src="https://github.com/user-attachments/assets/600f7bb8-e659-4c3f-bb08-d48cfe53fef4" />
+<img width="1498" height="951" alt="image" src="https://github.com/user-attachments/assets/08c56303-a0da-4cae-826a-e08da75cc772" />
+<img width="1553" height="933" alt="image" src="https://github.com/user-attachments/assets/6b997fe5-3373-4b72-ba8e-0d820d4fd5a8" />
