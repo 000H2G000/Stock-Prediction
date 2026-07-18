@@ -1,6 +1,8 @@
 # Pharma Stock AI — Project Plan (Documentation Only)
 
 AI system that predicts pharmacy/pharma distributor stock demand using internal sales data plus external real-world signals (search trends, weather/season, calendar events, health news), decides when to reorder, explains its reasoning in plain language, and — after human approval — sends the reorder to the supplier.
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/78355ee7-c24b-4fee-b9b9-f85e2ab6b60c" />
+
 
 ## One-line pitch
 
@@ -55,5 +57,4 @@ AI system that predicts pharmacy/pharma distributor stock demand using internal 
 | Model serving         | FastAPI                       | Free, open-source                |
 | Dashboard             | Streamlit                     | Free, open-source                |
 | Storage               | SQLite                        | Free, built into Python          |
-<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/78355ee7-c24b-4fee-b9b9-f85e2ab6b60c" />
 
