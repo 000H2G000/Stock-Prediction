@@ -18,7 +18,8 @@ AI system that predicts pharmacy/pharma distributor stock demand using internal 
 [Dummy internal stock data]  +  [Free external APIs: trends, weather, calendar, news]
                     ↓
         [Merged dataset, ML-ready format]
-                    ↓
+                    ↓<img width="1536" height="1024" alt="5d33af80-4657-4459-9ce6-60a574174da5" src="https://github.com/user-attachments/assets/20ad5d56-807c-4b7e-bd80-bd05b1f3eec3" />
+
         [XGBoost model, trained on Google Colab → prediction + reorder decision]
                     ↓
         [Free-tier LLM agent explains WHY in plain language]
@@ -54,3 +55,4 @@ AI system that predicts pharmacy/pharma distributor stock demand using internal 
 | Model serving         | FastAPI                       | Free, open-source                |
 | Dashboard             | Streamlit                     | Free, open-source                |
 | Storage               | SQLite                        | Free, built into Python          |
+
