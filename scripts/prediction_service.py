@@ -5,6 +5,9 @@ import pickle
 import os
 import requests
 import json
+from pathlib import Path
+
+GOOGLE_AI_STUDIO_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 try:
     from scripts.db_logger import log_decision, update_decision_status
 except ModuleNotFoundError:
@@ -17,10 +20,41 @@ except ModuleNotFoundError:
 
 MODEL_PATH = os.path.join("data", "xgb_demand_model.json")
 FEATURES_PATH = os.path.join("data", "model_features.pkl")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Load model and feature names
 model = None
 feature_names = None
+
+
+def resolve_llm_api_key(env_path=None):
+    candidate_paths = []
+    if env_path:
+        candidate_paths.append(env_path)
+    candidate_paths.extend([
+        os.path.join(os.getcwd(), ".env"),
+        str(PROJECT_ROOT / ".env"),
+        str(Path(__file__).resolve().parent / ".env"),
+    ])
+
+    for env_file in candidate_paths:
+        if not env_file or not os.path.exists(env_file):
+            continue
+        with open(env_file, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip().strip('"').strip("'")
+                if key in {"GOOGLE_API_KEY", "GEMINI_API_KEY", "GROQ_API_KEY"}:
+                    return value
+
+    return os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or os.environ.get("GROQ_API_KEY")
+
 
 def load_prediction_model():
     global model, feature_names
@@ -36,61 +70,107 @@ def load_prediction_model():
     model.load_model(MODEL_PATH)
     print("XGBoost model loaded successfully.")
 
-def explain_decision_with_llm(scenario_data, predicted_demand, reorder_qty, status):
-    groq_api_key = os.environ.get("GROQ_API_KEY")
-    
+def explain_decision_with_llm(scenario_data, predicted_demand, reorder_qty, status, llm_api_key=None):
+    api_key = llm_api_key or resolve_llm_api_key()
+    product_name = scenario_data['product_name']
+    category = scenario_data['category']
+    region = scenario_data['region']
+    season = scenario_data['season']
+    event_type = scenario_data['event_type']
+    current_stock = float(scenario_data['current_stock'])
+    safety_stock = float(scenario_data['safety_stock'])
+    reserved_stock = float(scenario_data['reserved_stock'])
+    available_stock = max(current_stock - reserved_stock, 0.0)
+    lead_time = int(scenario_data['supplier_lead_time'])
+    event_text = event_type.replace('_', ' ') if event_type != 'None' else 'routine demand'
+    stock_gap = safety_stock - available_stock
+    if stock_gap > 0:
+        stock_pressure = f"stock is {stock_gap:.0f} units below the safety target"
+    else:
+        stock_pressure = "stock is above the safety target"
+
+    if event_type != 'None':
+        event_pressure = f"the {event_text} and {season.lower()} conditions"
+    else:
+        event_pressure = f"the {season.lower()} demand pattern"
+
     prompt = f"""
-    Product: {scenario_data['product_name']}
-    Category: {scenario_data['category']}
-    Region: {scenario_data['region']}
-    Season: {scenario_data['season']}
-    Event: {scenario_data['event_type']} (Impact Score: {scenario_data['impact_score']})
-    Current Stock: {scenario_data['current_stock']}
-    Max Capacity: {scenario_data['max_stock_capacity']}
-    Safety Stock: {scenario_data['safety_stock']}
-    Average Sales (30 days): {scenario_data['avg_sales_30d']}
-    Predicted Future Demand: {predicted_demand:.1f}
-    Recommended Reorder Quantity: {reorder_qty:.1f}
-    Reorder Status: {status}
-    
-    Based on the above details, provide a clear, professional, and friendly 2-4 sentence explanation for a pharmacy manager on why this order recommendation was made. Keep it simple, avoid technical data science terms, and focus on the real-world factors.
+    You are writing a short recommendation note for a pharmacy manager.
+    Create a fresh, specific explanation for this exact scenario. Do not reuse a generic template.
+
+    Scenario details:
+    - Product: {product_name}
+    - Category: {category}
+    - Region: {region}
+    - Season: {season}
+    - Event: {event_type} (impact score: {scenario_data['impact_score']})
+    - Current stock: {current_stock}
+    - Reserved stock: {reserved_stock}
+    - Available stock after reservations: {available_stock}
+    - Safety stock target: {safety_stock}
+    - Stock situation: {stock_pressure}
+    - Average sales over 30 days: {scenario_data['avg_sales_30d']}
+    - Predicted future demand: {predicted_demand:.1f}
+    - Recommended reorder quantity: {reorder_qty:.1f}
+    - Supplier lead time: {lead_time} days
+    - Status: {status}
+
+    Instructions:
+    1. Write 2-4 sentences.
+    2. Mention the exact product name, region, and at least one concrete factor such as the stock gap, event, season, or supplier lead time.
+    3. Make the explanation sound natural and practical, not like a template.
+    4. Use a different opening and different wording than a generic stock message.
+    5. Explicitly connect the recommendation to this specific pressure: {event_pressure}.
+    6. Keep the tone simple and suitable for a pharmacy manager.
     """
     
-    if groq_api_key:
+    if api_key:
         try:
-            headers = {
-                "Authorization": f"Bearer {groq_api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "llama3-8b-8192",
-                "messages": [
-                    {"role": "system", "content": "You are a pharma stock advisor. Explain demand prediction decisions in plain, simple language for pharmacy managers."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 150
-            }
-            res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=5)
-            if res.status_code == 200:
-                return res.json()['choices'][0]['message']['content'].strip()
+            if "GROQ_API_KEY" in (os.environ.get("GROQ_API_KEY"),) and llm_api_key is None:
+                headers = {
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "model": "llama3-8b-8192",
+                    "messages": [
+                        {"role": "system", "content": "You are a pharma stock advisor. Explain demand prediction decisions in plain, simple language for pharmacy managers."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": 0.7,
+                    "max_tokens": 150
+                }
+                res = requests.post("https://api.groq.com/openai/v1/chat/completions", json=payload, headers=headers, timeout=15)
+                if res.status_code == 200:
+                    return res.json()['choices'][0]['message']['content'].strip()
+            else:
+                payload = {
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.95, "maxOutputTokens": 220}
+                }
+                res = requests.post(f"{GOOGLE_AI_STUDIO_BASE_URL}/gemini-2.0-flash:generateContent?key={api_key}", json=payload, timeout=20)
+                if res.status_code == 200:
+                    data = res.json()
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        return candidates[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
         except Exception as e:
-            print("Groq API error, falling back to rule-based explanation:", e)
+            print("LLM API error, falling back to rule-based explanation:", e)
             
     # Rule-based fallback explanation
     if status == "No Action Needed" or reorder_qty <= 0:
-        return f"We do not recommend a reorder for {scenario_data['product_name']} in {scenario_data['region']}. The current stock level of {scenario_data['current_stock']} is sufficient to cover the predicted demand of {predicted_demand:.1f} units during this period."
+        return f"{product_name} in {region} looks well covered right now, with {available_stock:.0f} units available against a safety goal of {safety_stock:.0f}. The forecast is calm enough that no replenishment is needed at this moment."
     
-    explanation = f"We recommend ordering {reorder_qty:.1f} units of {scenario_data['product_name']} for {scenario_data['region']}. "
-    if scenario_data['event_type'] != 'None':
-        explanation += f"This is driven by the upcoming {scenario_data['event_type'].replace('_', ' ')} (impact score: {scenario_data['impact_score']}) and seasonal {scenario_data['season']} trends. "
+    explanation = f"{product_name} in {region} needs attention because the forecasted demand of {predicted_demand:.1f} units is outpacing the available stock of {available_stock:.0f} units. "
+    if event_type != 'None':
+        explanation += f"The {season.lower()} season and the {event_text} are increasing pressure on this item, so the order should cover that risk. "
     else:
-        explanation += f"This order accounts for a predicted future demand of {predicted_demand:.1f} units. "
-        
-    explanation += f"Ordering now ensures safety stock is maintained and avoids stockout risk, given the supplier's {scenario_data['supplier_lead_time']}-day lead time."
+        explanation += f"The current demand pattern is strong enough that replenishment should be planned now. "
+    
+    explanation += f"With a {lead_time}-day supplier lead time and a safety target of {safety_stock:.0f}, ordering {reorder_qty:.1f} units now helps maintain service levels."
     return explanation
 
-def predict_and_reorder(scenario_data):
+def predict_and_reorder(scenario_data, record_decision=False, llm_api_key=None):
     if model is None:
         load_prediction_model()
         
@@ -153,24 +233,25 @@ def predict_and_reorder(scenario_data):
         reorder_qty = max(0.0, max_cap - curr_stock)
         status = "Pending"
         
-    explanation = explain_decision_with_llm(scenario_data, predicted_demand, reorder_qty, status)
+    explanation = explain_decision_with_llm(scenario_data, predicted_demand, reorder_qty, status, llm_api_key=llm_api_key)
     
-    # Log to SQLite
-    decision_id = log_decision(
-        product=scenario_data['product_name'],
-        region=scenario_data['region'],
-        predicted_demand=predicted_demand,
-        safety_stock=safety_stock,
-        current_stock=curr_stock,
-        reserved_stock=res_stock,
-        avg_sales_30d=avg_sales_30d,
-        lead_time=lead_time,
-        reliability=reliability,
-        max_capacity=max_cap,
-        reorder_quantity=reorder_qty,
-        status=status,
-        explanation=explanation
-    )
+    decision_id = None
+    if record_decision:
+        decision_id = log_decision(
+            product=scenario_data['product_name'],
+            region=scenario_data['region'],
+            predicted_demand=predicted_demand,
+            safety_stock=safety_stock,
+            current_stock=curr_stock,
+            reserved_stock=res_stock,
+            avg_sales_30d=avg_sales_30d,
+            lead_time=lead_time,
+            reliability=reliability,
+            max_capacity=max_cap,
+            reorder_quantity=reorder_qty,
+            status=status,
+            explanation=explanation
+        )
     
     return {
         "decision_id": decision_id,
